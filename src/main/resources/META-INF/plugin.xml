@@ -1,0 +1,39 @@
+<idea-plugin>
+    <id>at.destion.object-workbench</id>
+    <name>Object Workbench</name>
+    <vendor>Destion GmbH</vendor>
+
+    <description><![CDATA[
+        Object Workbench lets you create and manage live instances of your
+        project classes directly inside IntelliJ IDEA. You can inspect object
+        fields, invoke methods interactively, and pass existing instances as
+        arguments to explore runtime behavior faster.
+    ]]></description>
+
+    <change-notes><![CDATA[
+        Initial release.
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="Object Workbench"
+                anchor="bottom"
+                factoryClass="de.example.bluejlike.workbench.ObjectWorkbenchToolWindowFactory"
+                canCloseContents="false"/>
+    </extensions>
+
+    <actions>
+        <action id="ObjectWorkbench.Activate"
+                class="de.example.bluejlike.workbench.ActivateObjectWorkbenchAction"
+                text="Object Workbench"/>
+        <keyboard-shortcut keymap="$default"
+                           first-keystroke="alt shift 3"
+                           action-id="ObjectWorkbench.Activate"/>
+        <keyboard-shortcut keymap="$default"
+                           first-keystroke="ctrl alt W"
+                           action-id="ObjectWorkbench.Activate"/>
+    </actions>
+</idea-plugin>

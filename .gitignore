@@ -1,0 +1,10 @@
+.gradle/
+.intellijPlatform/
+.kotlin/
+build/
+out/
+.idea/
+*.iml
+.gradle-root-old/
+.intellijPlatform-root-old/
+.kotlin-root-old/
