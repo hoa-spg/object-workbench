@@ -22,13 +22,15 @@
                 id="Object Workbench"
                 anchor="bottom"
                 factoryClass="de.example.bluejlike.workbench.ObjectWorkbenchToolWindowFactory"
+                icon="/icons/objectWorkbenchToolWindow.png"
                 canCloseContents="false"/>
     </extensions>
 
     <actions>
         <action id="ObjectWorkbench.Activate"
                 class="de.example.bluejlike.workbench.ActivateObjectWorkbenchAction"
-                text="Object Workbench"/>
+                text="Object Workbench"
+                icon="/icons/objectWorkbenchToolWindow.png"/>
         <keyboard-shortcut keymap="$default"
                            first-keystroke="alt shift 3"
                            action-id="ObjectWorkbench.Activate"/>
