@@ -25,12 +25,17 @@ import java.util.stream.Collectors;
 public final class ExternalWorkbenchHelper {
     private final Map<Integer, Object> instances = new LinkedHashMap<>();
     private int nextId = 1;
+    private final HelperLanguage language;
 
     private final BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
     private final PrintWriter out = new PrintWriter(new OutputStreamWriter(System.out, StandardCharsets.UTF_8), true);
 
+    private ExternalWorkbenchHelper(HelperLanguage language) {
+        this.language = language;
+    }
+
     public static void main(String[] args) throws Exception {
-        new ExternalWorkbenchHelper().run();
+        new ExternalWorkbenchHelper(HelperLanguage.fromArgs(args)).run();
     }
 
     private void run() throws IOException {
@@ -51,7 +56,7 @@ public final class ExternalWorkbenchHelper {
                     case "INVOKE" -> invoke(parts);
                     case "INSPECT_OBJECT" -> inspectObject(parts);
                     case "LIST_ASSIGNABLE" -> listAssignable(parts);
-                    default -> sendError("Unbekanntes Kommando: " + command);
+                    default -> sendError(t("error.unknownCommand", command));
                 }
             } catch (Throwable t) {
                 sendError(buildErrorMessage(t));
@@ -65,6 +70,16 @@ public final class ExternalWorkbenchHelper {
         List<Constructor<?>> constructors = sortedConstructors(clazz);
 
         sendOk();
+        if (shouldOfferImplicitDefaultConstructor(clazz, constructors)) {
+            String display = clazz.getSimpleName() + "()";
+            out.println(String.join("\t",
+                "CTOR",
+                "-1",
+                encodeB64(display),
+                encodeB64(""),
+                encodeB64("")
+            ));
+        }
         for (int i = 0; i < constructors.size(); i++) {
             Constructor<?> ctor = constructors.get(i);
             String display = clazz.getSimpleName() + "(" +
@@ -90,21 +105,32 @@ public final class ExternalWorkbenchHelper {
 
         Class<?> clazz = resolveType(fqcn);
         List<Constructor<?>> constructors = sortedConstructors(clazz);
-        Constructor<?> ctor = constructors.get(constructorIndex);
-        Class<?>[] parameterTypes = ctor.getParameterTypes();
+        final Object instance;
+        if (constructorIndex == -1) {
+            if (argCount != 0) {
+                throw new IllegalArgumentException(t("error.constructorArgCountMismatch"));
+            }
+            instance = instantiateUsingImplicitDefaultConstructor(clazz, constructors);
+        } else if (constructorIndex < 0 || constructorIndex >= constructors.size()) {
+            throw new IllegalArgumentException(t("error.invalidConstructorIndexForClass", constructorIndex, fqcn));
+        } else {
+            Constructor<?> ctor = constructors.get(constructorIndex);
+            Class<?>[] parameterTypes = ctor.getParameterTypes();
 
-        if (parameterTypes.length != argCount) {
-            throw new IllegalArgumentException("Parameteranzahl passt nicht zum Konstruktor");
+            if (parameterTypes.length != argCount) {
+                throw new IllegalArgumentException(t("error.constructorArgCountMismatch"));
+            }
+
+            Object[] args = new Object[argCount];
+            for (int i = 0; i < argCount; i++) {
+                String token = decodeB64(parts[4 + i]);
+                args[i] = parseToken(parameterTypes[i], token);
+            }
+
+            ctor.setAccessible(true);
+            instance = ctor.newInstance(args);
         }
 
-        Object[] args = new Object[argCount];
-        for (int i = 0; i < argCount; i++) {
-            String token = decodeB64(parts[4 + i]);
-            args[i] = parseToken(parameterTypes[i], token);
-        }
-
-        ctor.setAccessible(true);
-        Object instance = ctor.newInstance(args);
         int id = nextId++;
         instances.put(id, instance);
 
@@ -130,7 +156,8 @@ public final class ExternalWorkbenchHelper {
                 encodeB64(method.getName()),
                 encodeB64(display),
                 encodeB64(paramTypes),
-                encodeB64(paramNames)
+                encodeB64(paramNames),
+                encodeB64(method.getDeclaringClass().getName())
             ));
         }
         out.println("END");
@@ -148,7 +175,7 @@ public final class ExternalWorkbenchHelper {
 
         Class<?>[] parameterTypes = method.getParameterTypes();
         if (parameterTypes.length != argCount) {
-            throw new IllegalArgumentException("Parameteranzahl passt nicht zur Methode");
+            throw new IllegalArgumentException(t("error.methodArgCountMismatch"));
         }
 
         Object[] args = new Object[argCount];
@@ -197,7 +224,7 @@ public final class ExternalWorkbenchHelper {
             try {
                 value = field.get(instance);
             } catch (IllegalAccessException e) {
-                value = "<nicht lesbar>";
+                value = t("value.notReadable");
             }
             out.println(String.join("\t",
                 "FIELD",
@@ -213,7 +240,7 @@ public final class ExternalWorkbenchHelper {
     private Object parseToken(Class<?> expectedType, String token) throws Exception {
         if ("NULL".equals(token)) {
             if (expectedType.isPrimitive()) {
-                throw new IllegalArgumentException("null ist fuer primitiven Typ " + expectedType.getName() + " nicht erlaubt");
+                throw new IllegalArgumentException(t("error.nullNotAllowedForPrimitive", expectedType.getName()));
             }
             return null;
         }
@@ -222,13 +249,13 @@ public final class ExternalWorkbenchHelper {
             int id = Integer.parseInt(token.substring("REF:".length()));
             Object value = requireInstance(id);
             if (!expectedType.isAssignableFrom(value.getClass())) {
-                throw new IllegalArgumentException("Instanz #" + id + " ist nicht kompatibel mit " + expectedType.getName());
+                throw new IllegalArgumentException(t("error.instanceNotCompatible", id, expectedType.getName()));
             }
             return value;
         }
 
         if (!token.startsWith("TEXT:")) {
-            throw new IllegalArgumentException("Ungueltiges Parameter-Token: " + token);
+            throw new IllegalArgumentException(t("error.invalidParameterToken", token));
         }
 
         String text = token.substring("TEXT:".length());
@@ -242,7 +269,7 @@ public final class ExternalWorkbenchHelper {
         }
         if (type == boolean.class || type == Boolean.class) {
             if (!"true".equals(text) && !"false".equals(text)) {
-                throw new IllegalArgumentException("Boolean muss true oder false sein");
+                throw new IllegalArgumentException(t("error.booleanMustBeTrueFalse"));
             }
             return Boolean.parseBoolean(text);
         }
@@ -254,23 +281,80 @@ public final class ExternalWorkbenchHelper {
         if (type == byte.class || type == Byte.class) return Byte.parseByte(text);
         if (type == char.class || type == Character.class) {
             if (text.length() != 1) {
-                throw new IllegalArgumentException("Char muss genau ein Zeichen enthalten");
+                throw new IllegalArgumentException(t("error.charLength"));
             }
             return text.charAt(0);
         }
         if (type.isEnum()) {
             return Enum.valueOf((Class<Enum>) type, text);
         }
-        throw new IllegalArgumentException("Literal fuer Typ " + type.getName() + " wird nicht unterstuetzt. Nutze eine Referenz auf eine Instanz.");
+        throw new IllegalArgumentException(t("error.literalNotSupported", type.getName()));
     }
 
     private List<Constructor<?>> sortedConstructors(Class<?> clazz) {
         List<Constructor<?>> constructors = new ArrayList<>(Arrays.asList(clazz.getDeclaredConstructors()));
+        if (constructors.isEmpty() && mayHaveImplicitDefaultConstructor(clazz)) {
+            try {
+                constructors.add(clazz.getDeclaredConstructor());
+            } catch (NoSuchMethodException ignored) {
+            }
+        }
         constructors.sort(
             Comparator.comparingInt((Constructor<?> c) -> c.getParameterTypes().length)
                 .thenComparing(c -> Arrays.stream(c.getParameterTypes()).map(Class::getName).collect(Collectors.joining(";")))
         );
         return constructors;
+    }
+
+    private boolean shouldOfferImplicitDefaultConstructor(Class<?> clazz, List<Constructor<?>> constructors) {
+        if (!mayHaveImplicitDefaultConstructor(clazz)) {
+            return false;
+        }
+        return constructors.stream().noneMatch(ctor -> ctor.getParameterCount() == 0);
+    }
+
+    private Object instantiateUsingImplicitDefaultConstructor(Class<?> clazz, List<Constructor<?>> constructors) throws Exception {
+        Constructor<?> noArgConstructor = constructors.stream()
+            .filter(ctor -> ctor.getParameterCount() == 0)
+            .findFirst()
+            .orElse(null);
+        if (noArgConstructor != null) {
+            noArgConstructor.setAccessible(true);
+            return noArgConstructor.newInstance();
+        }
+
+        if (constructors.isEmpty()) {
+            throw new IllegalArgumentException(t("error.invalidConstructorIndexForClass", -1, clazz.getName()));
+        }
+
+        Constructor<?> fallback = constructors.get(0);
+        Class<?>[] parameterTypes = fallback.getParameterTypes();
+        Object[] defaultArgs = new Object[parameterTypes.length];
+        for (int i = 0; i < parameterTypes.length; i++) {
+            defaultArgs[i] = defaultValueForType(parameterTypes[i]);
+        }
+
+        fallback.setAccessible(true);
+        return fallback.newInstance(defaultArgs);
+    }
+
+    private Object defaultValueForType(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return null;
+        }
+        if (type == boolean.class) return false;
+        if (type == char.class) return '\0';
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0f;
+        if (type == double.class) return 0d;
+        return null;
+    }
+
+    private boolean mayHaveImplicitDefaultConstructor(Class<?> clazz) {
+        return !clazz.isInterface() && !clazz.isAnnotation() && !clazz.isArray() && !clazz.isPrimitive();
     }
 
     private List<Method> sortedMethods(Class<?> clazz) {
@@ -309,7 +393,7 @@ public final class ExternalWorkbenchHelper {
     private Object requireInstance(int id) {
         Object value = instances.get(id);
         if (value == null) {
-            throw new IllegalArgumentException("Instanz #" + id + " nicht gefunden");
+            throw new IllegalArgumentException(t("error.instanceNotFound", id));
         }
         return value;
     }
@@ -360,14 +444,14 @@ public final class ExternalWorkbenchHelper {
 
     private String requireArg(String[] parts, int index, String name) {
         if (index >= parts.length) {
-            throw new IllegalArgumentException("Argument fehlt: " + name);
+            throw new IllegalArgumentException(t("error.missingArgument", name));
         }
         return parts[index];
     }
 
     private void ensureLength(String[] parts, int minLength, String field) {
         if (parts.length < minLength) {
-            throw new IllegalArgumentException("Zu wenige Felder fuer " + field);
+            throw new IllegalArgumentException(t("error.tooFewFields", field));
         }
     }
 
@@ -384,6 +468,11 @@ public final class ExternalWorkbenchHelper {
         return type + ": " + msg;
     }
 
+    private String t(String key, Object... args) {
+        String template = language.text(key);
+        return args.length == 0 ? template : String.format(template, args);
+    }
+
     private String encodeB64(String value) {
         return Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
@@ -393,5 +482,114 @@ public final class ExternalWorkbenchHelper {
             return "";
         }
         return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
+    }
+
+    private enum HelperLanguage {
+        DE,
+        EN,
+        ES,
+        FA;
+
+        static HelperLanguage fromArgs(String[] args) {
+            if (args == null || args.length == 0) {
+                return EN;
+            }
+            String code = args[0] == null ? "" : args[0].trim().toLowerCase();
+            return switch (code) {
+                case "de" -> DE;
+                case "es" -> ES;
+                case "fa" -> FA;
+                default -> EN;
+            };
+        }
+
+        String text(String key) {
+            return switch (this) {
+                case DE -> german(key);
+                case EN -> english(key);
+                case ES -> spanish(key);
+                case FA -> farsi(key);
+            };
+        }
+
+        private static String english(String key) {
+            return switch (key) {
+                case "error.unknownCommand" -> "Unknown command: %s";
+                case "error.invalidConstructorIndexForClass" -> "Invalid constructor index %d for %s";
+                case "error.constructorArgCountMismatch" -> "Argument count does not match constructor";
+                case "error.methodArgCountMismatch" -> "Argument count does not match method";
+                case "value.notReadable" -> "<not readable>";
+                case "error.nullNotAllowedForPrimitive" -> "null is not allowed for primitive type %s";
+                case "error.instanceNotCompatible" -> "Instance #%d is not compatible with %s";
+                case "error.invalidParameterToken" -> "Invalid parameter token: %s";
+                case "error.booleanMustBeTrueFalse" -> "Boolean must be true or false";
+                case "error.charLength" -> "Char must contain exactly one character";
+                case "error.literalNotSupported" -> "Literal for type %s is not supported. Use an instance reference.";
+                case "error.instanceNotFound" -> "Instance #%d not found";
+                case "error.missingArgument" -> "Missing argument: %s";
+                case "error.tooFewFields" -> "Too few fields for %s";
+                default -> key;
+            };
+        }
+
+        private static String german(String key) {
+            return switch (key) {
+                case "error.unknownCommand" -> "Unbekanntes Kommando: %s";
+                case "error.invalidConstructorIndexForClass" -> "Ungueltiger Konstruktor-Index %d fuer %s";
+                case "error.constructorArgCountMismatch" -> "Parameteranzahl passt nicht zum Konstruktor";
+                case "error.methodArgCountMismatch" -> "Parameteranzahl passt nicht zur Methode";
+                case "value.notReadable" -> "<nicht lesbar>";
+                case "error.nullNotAllowedForPrimitive" -> "null ist fuer primitiven Typ %s nicht erlaubt";
+                case "error.instanceNotCompatible" -> "Instanz #%d ist nicht kompatibel mit %s";
+                case "error.invalidParameterToken" -> "Ungueltiges Parameter-Token: %s";
+                case "error.booleanMustBeTrueFalse" -> "Boolean muss true oder false sein";
+                case "error.charLength" -> "Char muss genau ein Zeichen enthalten";
+                case "error.literalNotSupported" -> "Literal fuer Typ %s wird nicht unterstuetzt. Nutze eine Referenz auf eine Instanz.";
+                case "error.instanceNotFound" -> "Instanz #%d nicht gefunden";
+                case "error.missingArgument" -> "Argument fehlt: %s";
+                case "error.tooFewFields" -> "Zu wenige Felder fuer %s";
+                default -> english(key);
+            };
+        }
+
+        private static String spanish(String key) {
+            return switch (key) {
+                case "error.unknownCommand" -> "Comando desconocido: %s";
+                case "error.invalidConstructorIndexForClass" -> "Indice de constructor no valido %d para %s";
+                case "error.constructorArgCountMismatch" -> "La cantidad de argumentos no coincide con el constructor";
+                case "error.methodArgCountMismatch" -> "La cantidad de argumentos no coincide con el metodo";
+                case "value.notReadable" -> "<no legible>";
+                case "error.nullNotAllowedForPrimitive" -> "null no esta permitido para el tipo primitivo %s";
+                case "error.instanceNotCompatible" -> "La instancia #%d no es compatible con %s";
+                case "error.invalidParameterToken" -> "Token de parametro no valido: %s";
+                case "error.booleanMustBeTrueFalse" -> "Boolean debe ser true o false";
+                case "error.charLength" -> "Char debe contener exactamente un caracter";
+                case "error.literalNotSupported" -> "No se admite literal para el tipo %s. Usa una referencia a una instancia.";
+                case "error.instanceNotFound" -> "Instancia #%d no encontrada";
+                case "error.missingArgument" -> "Falta argumento: %s";
+                case "error.tooFewFields" -> "Muy pocos campos para %s";
+                default -> english(key);
+            };
+        }
+
+        private static String farsi(String key) {
+            return switch (key) {
+                case "error.unknownCommand" -> "دستور ناشناخته: %s";
+                case "error.invalidConstructorIndexForClass" -> "اندیس سازنده %d برای %s نامعتبر است";
+                case "error.constructorArgCountMismatch" -> "تعداد آرگومان‌ها با سازنده سازگار نیست";
+                case "error.methodArgCountMismatch" -> "تعداد آرگومان‌ها با متد سازگار نیست";
+                case "value.notReadable" -> "<قابل خواندن نیست>";
+                case "error.nullNotAllowedForPrimitive" -> "برای نوع اولیه %s مقدار null مجاز نیست";
+                case "error.instanceNotCompatible" -> "نمونه #%d با %s سازگار نیست";
+                case "error.invalidParameterToken" -> "توکن پارامتر نامعتبر است: %s";
+                case "error.booleanMustBeTrueFalse" -> "مقدار بولین باید true یا false باشد";
+                case "error.charLength" -> "Char باید دقیقا یک کاراکتر داشته باشد";
+                case "error.literalNotSupported" -> "لیترال برای نوع %s پشتیبانی نمی‌شود. از ارجاع نمونه استفاده کنید.";
+                case "error.instanceNotFound" -> "نمونه #%d پیدا نشد";
+                case "error.missingArgument" -> "آرگومان موجود نیست: %s";
+                case "error.tooFewFields" -> "فیلدهای کافی برای %s وجود ندارد";
+                default -> english(key);
+            };
+        }
     }
 }
