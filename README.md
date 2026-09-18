@@ -1,30 +1,34 @@
 # Object Workbench (IntelliJ Plugin)
 
-MVP fuer eine Objekt-Workbench in IntelliJ IDEA.
+Object Workbench is an IntelliJ IDEA plugin to create, inspect, and interact
+with live Java objects from your project.
 
-## Aktueller Funktionsumfang
+## Installation
 
-- Klasse aus dem Projekt auswaehlen (oder FQCN eingeben)
-- Konstruktoren laden und per Formular Parameter eingeben
-- Instanz erstellen und als "Kasten" in der Workbench anzeigen
-- Instanz auswaehlen, Methoden anzeigen und ausfuehren
-- Rueckgabewerte und Exceptions im Log sehen
+### Option 1: JetBrains Marketplace
 
-## Grenzen des MVP
+1. Open IntelliJ IDEA.
+2. Go to `Settings/Preferences -> Plugins -> Marketplace`.
+3. Search for `Object Workbench` and click `Install`.
+4. Restart the IDE.
 
-- Reflection basiert auf kompilierten Klassen im Projekt-Output
-- Parameter-Parsing nur fuer primitive Typen, Wrapper, String, enum
-- Fuer komplexe Typen (z. B. Listen, eigene Objekte) gibt es noch keinen spezialisierten Editor
+### Option 2: Install from ZIP
 
-## Starten
+1. Build the plugin: `./gradlew buildPlugin`
+2. In IntelliJ IDEA, open `Settings/Preferences -> Plugins`.
+3. Click the gear icon and choose `Install Plugin from Disk...`.
+4. Select the ZIP from `build/distributions/` and restart the IDE.
 
-1. Projekt in IntelliJ IDEA oeffnen
-2. Gradle Sync ausfuehren
-3. Task `runIde` starten
-4. In der gestarteten IDE das Tool Window `Object Workbench` oeffnen
+## Usage
 
-## Naechste sinnvolle Schritte
+1. Open the tool window `Object Workbench`.
+2. Enter or pick a fully qualified class name from your project.
+3. Load a constructor, fill in parameter values, and create an instance.
+4. Select an instance card to inspect fields or invoke methods.
+5. Review results and exceptions in the output panel.
 
-- Besserer Parameter-Editor fuer Collections und verschachtelte Objekte
-- Speichern/Laden von Session-Zustaenden
-- Optional: Ausfuehrung im Debug-Prozess statt lokalem Reflection-ClassLoader
+## Notes
+
+- Best used with compiled project classes.
+- Current parameter input focuses on primitive types, wrappers, strings, and
+  enums.
